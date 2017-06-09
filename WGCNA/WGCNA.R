@@ -183,16 +183,51 @@ EnrichrPlot <- function(enrichr.df, filename, plot.title, plot.height = 5, plot.
     enrichr.df$Gene.Count <- map(enrichr.df$Genes, str_split, ",") %>% map(unlist) %>% map_int(length)
     enrichr.df$Adj.P.value <- p.adjust(enrichr.df$P.value, method = "fdr")
     enrichr.df$Log.P.value <- -log10(enrichr.df$Adj.P.value)
-    enrichr.df$Term %<>% str_replace_all("\\ \\(.*$", "") %>% str_replace_all("\\_Homo.*$", "")  #Remove any thing after the left parenthesis and convert to all lower case
+    enrichr.df$Term %<>% str_replace_all("\\ \\(.*$", "") %>% 
+        str_replace_all("\\_Homo.*$", "")  #Remove any thing after the left parenthesis and convert to all lower case
     enrichr.df$Format.Name <- str_c(enrichr.df$Database, ": ", enrichr.df$Term, " (", enrichr.df$Gene.Count, ")")
     enrichr.df %<>% arrange(Log.P.value)
     enrichr.df$Format.Name %<>% factor(levels = enrichr.df$Format.Name)
 
-    p <- ggplot(enrichr.df, aes(Format.Name, Log.P.value)) + geom_bar(stat = "identity", fill = "mediumblue", size = 1, color = "black") 
-    p <- p + coord_flip() + theme_bw() + theme(axis.title.y = element_blank(), axis.ticks.y = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + ylab(expression(paste(Log[10], ' P-Value')))
-    p <- p + theme(plot.background = element_blank(), panel.background = element_blank(), legend.background = element_blank(), axis.text.y = element_text(size = 12), panel.border = element_blank(), axis.line.x = element_line(size = 1, color = "black"))
-    p <- p + geom_hline(color = "red", yintercept = -log10(0.05), size = 1)
+    p <- ggplot(enrichr.df, aes(Format.Name, Log.P.value)) + 
+         geom_bar(stat = "identity", fill = "mediumblue", size = 1, color = "black") + 
+         geom_hline(color = "red", yintercept = -log10(0.05), size = 1) +
+         coord_flip() + 
+         theme_bw() + 
+         theme(axis.title.y = element_blank(), 
+               axis.ticks.y = element_blank(), 
+               axis.line.x = element_line(size = 1, color = "black"),
+               panel.grid.major = element_blank(), 
+               panel.grid.minor = element_blank(), 
+               panel.border = element_blank(),
+               panel.background = element_blank(), 
+               plot.background = element_blank(), 
+               legend.background = element_blank()) + ylab(expression(paste(Log[10], ' P-Value')))
+
     CairoPDF(filename, height = plot.height, width = plot.width, bg = "transparent")
+    print(p)
+    dev.off()
+}
+
+Top5Plot <- function(rank.column, toptable.object, voom.object, pheno.object, pheno.col, levels.vector, maintitle, filename) {
+    col.name <- str_c("desc(", rank.column, ")")
+
+    top5.symbol <- arrange_(toptable.object, col.name)$Symbol[1:5]
+    top5.expr <- t(voom.object[top5.symbol,])
+    colnames(top5.expr) <- top5.symbol
+    top5.df <- data.frame(Sample = pheno.object[[pheno.col]], top5.expr) %>%
+        gather_("Gene", "Expression", names(.)[-1])
+    top5.df$Gene %<>% factor(levels = make.names(top5.symbol))
+    top5.df$Sample %<>% factor(levels = make.names(levels.vector))
+
+    p <- ggplot(top5.df, aes(x = Sample, y = Expression, color = Sample)) + geom_boxplot() + geom_jitter() + theme_bw()
+    p <- p + facet_wrap(~ Gene, ncol = 5, scales = "free") + theme(legend.position = "none")
+    p <- p + theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.title.x = element_blank())
+    p <- p + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title.x = element_blank()) 
+    p <- p + theme(plot.background = element_blank(), panel.border = element_rect(size = 1, color = "black"))
+    p <- p + theme(plot.title = element_text(hjust = 0.5))
+    p <- p + ggtitle(maintitle)
+    CairoPDF(filename, height = 4, width = 16, bg = "transparent")
     print(p)
     dev.off()
 }
@@ -388,34 +423,12 @@ ModuleWorkbook(module.membership, "./module_membership.xlsx")
 #write_csv(eigengene.connectivity.long, "eigengene_connectivity_long.csv")
 
 
-all.smooth <- apply(ME.genes, 2, smooth.spline, spar = 0.4) %>% llply(`[`, "y")
-smooth.df <- data.frame(all.smooth)
-colnames(smooth.df) <- names(all.smooth)
-smooth.df$x <- as.factor(1:nrow(smooth.df))
-smooth.plot <- melt(smooth.df, id.vars = "x")
-
-PCAPlot("all_principal_components", smooth.plot, FALSE, 10, 15)
-PCAPlot("facet_principal_components", smooth.plot, TRUE, 13, 25)
-rownames(ME.genes) <- rownames(expr.collapse)
-
-sample.ids <- factor(rownames(expr.collapse), levels = rownames(expr.collapse))
-colnames(ME.genes) %<>% str_replace("ME", "")
-ME.genes.plot <- mutate(data.frame(ME.genes), Sample.ID = sample.ids)
-expr.data.plot <- data.frame(t(expr.collapse), module.colors)
-cluster <- makeForkCluster(8)
-split(expr.data.plot, expr.data.plot$module.colors) %>% map(Heatmap, ME.genes.plot)
-#by(expr.data.plot, expr.data.plot$module.colors, Heatmap, ME.genes.plot)
-
 #modules.out <- select(gene.info, Symbol, module.color)
 #targets.final.known$Sample.Name %<>% str_replace(" ", "")
 
 source("../../code/GO/enrichr.R")
 source("../../FRDA project/common_functions.R")
 
-modules.filter <- select(module.membership, Symbol, Module)
-enrichr.terms <- c("GO_Biological_Process_2015", "GO_Molecular_Function_2015", "KEGG_2016", "Reactome_2016", "Human_Gene_Atlas", "GTEx_Tissue_Sample_Gene_Expression_Profiles_up", "GTEx_Tissue_Sample_Gene_Expression_Profiles_down") 
-color.names <- unique(module.colors) %>% sort
-trap1 <- map(color.names, EnrichrSubmit, modules.filter, enrichr.terms, FALSE)
 
 ME.genes.plot <- mutate(ME.genes, Combined = pheno.import$Combined) %>%
     gather(Module.Color, Eigengene, -Combined) 
@@ -433,6 +446,11 @@ dev.off()
 test <- lapply(ls(), function(thing) print(object.size(get(thing)), units = 'auto')) 
 names(test) <- ls()
 unlist(test) %>% sort
+
+modules.filter <- select(module.membership, Symbol, Module)
+enrichr.terms <- c("GO_Biological_Process_2015", "GO_Molecular_Function_2015", "KEGG_2016", "Reactome_2016", "Human_Gene_Atlas", "GTEx_Tissue_Sample_Gene_Expression_Profiles_up", "GTEx_Tissue_Sample_Gene_Expression_Profiles_down") 
+color.names <- unique(module.colors) %>% sort
+trap1 <- map(color.names, EnrichrSubmit, modules.filter, enrichr.terms, FALSE)
 
 #Enrichr plots
 FilterEnrichr <- function(enrichr.df, size = 100) {
@@ -560,7 +578,7 @@ magenta.enrichr.final <- rbind(magenta.gobiol.final, magenta.gomole.final, magen
 EnrichrPlot(magenta.enrichr.final, "magenta.enrichr", "")
 
 #PPI
-genetable.symbol <- filter(module.membership, !is.na(Symbol) & nchar(Symbol) > 0)
+genetable.symbol <- filter(module.membership, !is.na(Symbol) & nchar(Symbol) > -1)
 turquoise.only <- filter(genetable.symbol, Module == "turquoise")$Symbol
 brown.only <- filter(genetable.symbol, Module == "brown")$Symbol
 pink.only <- filter(genetable.symbol, Module == "pink")$Symbol
@@ -589,8 +607,8 @@ magenta.incident <- map(V(magenta.all.graph), incident, graph = magenta.all.grap
 magenta.ppi.df <- data.frame(Symbol = names(magenta.incident), PPI = magenta.incident)
 
 #Overlap with DE data
-voom.pco.up <- filter(voom.top, adj.P.Val.pco < 0.01 & logFC.pco > 1.5) %>% select(Symbol, adj.P.Val.pco, logFC.pco)
-voom.pco.down <- filter(voom.top, adj.P.Val.pco < 0.01 & logFC.pco < -1.5) %>% select(Symbol, adj.P.Val.pco, logFC.pco)
+voom.pco.up <- filter(voom.top, adj.P.Val.pco < -1.01 & logFC.pco > 1.5) %>% select(Symbol, adj.P.Val.pco, logFC.pco)
+voom.pco.down <- filter(voom.top, adj.P.Val.pco < -1.01 & logFC.pco < -1.5) %>% select(Symbol, adj.P.Val.pco, logFC.pco)
 
 turquoise.pco.up <- left_join(voom.pco.up, filter(module.membership, Module == "turquoise")) %>% filter(!is.na(Module)) %>% arrange(desc(kscaled))
 brown.pco.down <- left_join(voom.pco.down, filter(module.membership, Module == "brown")) %>% filter(!is.na(Module)) %>% arrange(desc(kscaled))
@@ -602,28 +620,6 @@ brown.ppi.down <- left_join(voom.pco.down, brown.ppi.df) %>% filter(!is.na(PPI))
 pink.ppi.up <- left_join(voom.pco.up, pink.ppi.df) %>% filter(!is.na(PPI)) %>% arrange(desc(PPI))
 magenta.ppi.down <- left_join(voom.pco.down, magenta.ppi.df) %>% filter(!is.na(PPI)) %>% arrange(desc(PPI))
 
-Top5Plot <- function(rank.column, toptable.object, voom.object, pheno.object, pheno.col, levels.vector, maintitle, filename) {
-    col.name <- str_c("desc(", rank.column, ")")
-
-    top5.symbol <- arrange_(toptable.object, col.name)$Symbol[1:5]
-    top5.expr <- t(voom.object[top5.symbol,])
-    colnames(top5.expr) <- top5.symbol
-    top5.df <- data.frame(Sample = pheno.object[[pheno.col]], top5.expr) %>%
-        gather_("Gene", "Expression", names(.)[-1])
-    top5.df$Gene %<>% factor(levels = make.names(top5.symbol))
-    top5.df$Sample %<>% factor(levels = make.names(levels.vector))
-
-    p <- ggplot(top5.df, aes(x = Sample, y = Expression, color = Sample)) + geom_boxplot() + geom_jitter() + theme_bw()
-    p <- p + facet_wrap(~ Gene, ncol = 5, scales = "free") + theme(legend.position = "none")
-    p <- p + theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.title.x = element_blank())
-    p <- p + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title.x = element_blank()) 
-    p <- p + theme(plot.background = element_blank(), panel.border = element_rect(size = 1, color = "black"))
-    p <- p + theme(plot.title = element_text(hjust = 0.5))
-    p <- p + ggtitle(maintitle)
-    CairoPDF(filename, height = 4, width = 16, bg = "transparent")
-    print(p)
-    dev.off()
-}
 
 batch2.levels <- c("normal.DMSO", "FRDA.DMSO", "normal.109", "FRDA.109")
 Top5Plot("kscaled", turquoise.pco.up, voom.collapse, pheno.import, "Combined", batch2.levels, "FRDA vs. Control (upregulated, turquoise module)", "top5.turquoise.up")

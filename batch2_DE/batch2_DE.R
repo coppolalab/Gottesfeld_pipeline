@@ -266,9 +266,13 @@ SaveRDSgz(batch2.voom$E, "./save/batch2.voom.rda")
 batch2.mds <- batch2.voom$E %>% t %>% dist(method = "manhattan") %>% cmdscale(eig = TRUE) #get first two principle components
 PCAPlot("mds_batch2", batch2.mds, pheno.batch2, "none", "Combined", plot.width = 7) #label PCs by status
 
+pheno.batch2$Line.Condition <- factor(str_c(pheno.batch2$Condition, pheno.batch2$Condition2, sep = "."))
+batch2.dupe <- duplicateCorrelation(batch2.variable, block = pheno.batch2$Line.Condition)
 batch2.contrasts <- makeContrasts(FRDA.DMSO - normal.DMSO, normal.109 - normal.DMSO, FRDA.109 - FRDA.DMSO, levels = batch2.design)
-batch2.fit    <- lmFit(batch2.variable, batch2.design) %>% contrasts.fit(batch2.contrasts)
-batch2.ebayes <- eBayes(batch2.fit)
+batch2.fit  <- lmFit(batch2.variable, batch2.design, block = pheno.batch2$Line.Condition, correlation = batch2.dupe$consensus.correlation) %>% 
+    contrasts.fit(batch2.contrasts)
+batch2.fit  <- lmFit(batch2.variable, batch2.design) %>% contrasts.fit(batch2.contrasts)
+batch2.ebayes <- eBayes(batch2.fit, robust = TRUE)
 
 #Batch 2
 toptable.pco2 <- topTable(batch2.ebayes, coef = 1, n = Inf) 
@@ -307,7 +311,7 @@ colnames(batch2.melt.voom)[2:4] <- c("Direction", "Num.Genes", "Comparison")
 batch2.genetotals.voom <- group_by(batch2.melt.voom, Threshold) %>% summarise(sum(abs(Num.Genes)))
 colnames(batch2.genetotals.voom)[2] <- "Total.Genes"
 
-Batch2.toptable.plot <- left_join(batch2.melt.voom, batch2.genetotals.voom)
+batch2.toptable.plot <- left_join(batch2.melt.voom, batch2.genetotals.voom)
 batch2.toptable.plot$Threshold %<>% factor
 batch2.toptable.plot$Comparison %<>% str_replace_all("_", " ")
 
